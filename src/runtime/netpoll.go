@@ -141,6 +141,7 @@ func poll_runtime_isPollServerDescriptor(fd uintptr) bool {
 
 //go:linkname poll_runtime_pollOpen internal/poll.runtime_pollOpen
 func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
+	//从预配置的内存中拿到一个pollDesc，然后重置pollDesc的信息
 	pd := pollcache.alloc()
 	lock(&pd.lock)
 	if pd.wg != 0 && pd.wg != pdReady {
@@ -162,11 +163,13 @@ func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
 	unlock(&pd.lock)
 
 	var errno int32
+	//把fd及pollDesc这些信息放入到epoll的的红黑树中
 	errno = netpollopen(fd, pd)
 	return pd, int(errno)
 }
 
 //go:linkname poll_runtime_pollClose internal/poll.runtime_pollClose
+//把fd从红黑树中移除
 func poll_runtime_pollClose(pd *pollDesc) {
 	if !pd.closing {
 		throw("runtime: close polldesc w/o unblock")
@@ -211,6 +214,7 @@ func poll_runtime_pollReset(pd *pollDesc, mode int) int {
 // This returns an error code; the codes are defined above.
 //go:linkname poll_runtime_pollWait internal/poll.runtime_pollWait
 func poll_runtime_pollWait(pd *pollDesc, mode int) int {
+	//check 当前fd是否正常
 	errcode := netpollcheckerr(pd, int32(mode))
 	if errcode != pollNoError {
 		return errcode
@@ -219,6 +223,7 @@ func poll_runtime_pollWait(pd *pollDesc, mode int) int {
 	if GOOS == "solaris" || GOOS == "illumos" || GOOS == "aix" {
 		netpollarm(pd, mode)
 	}
+	//loop 直到把goroutine 挂起
 	for !netpollblock(pd, int32(mode), false) {
 		errcode = netpollcheckerr(pd, int32(mode))
 		if errcode != pollNoError {
@@ -228,6 +233,7 @@ func poll_runtime_pollWait(pd *pollDesc, mode int) int {
 		// but before we had a chance to run, timeout has been reset.
 		// Pretend it has not happened and retry.
 	}
+	//表示已经运行完成
 	return pollNoError
 }
 
@@ -419,13 +425,16 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// set the gpp semaphore to pdWait
 	for {
 		old := *gpp
+		//IO 已经ready
 		if old == pdReady {
 			*gpp = 0
 			return true
 		}
+		//还有别的goroutine占用这个fd
 		if old != 0 {
 			throw("runtime: double wait")
 		}
+		//把当前goroutine 标记为已经被占有，在等待。
 		if atomic.Casuintptr(gpp, 0, pdWait) {
 			break
 		}
@@ -434,11 +443,14 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// need to recheck error states after setting gpp to pdWait
 	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
 	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
+	//如果poll没有问题的话，就会挂起当前的goroutine
 	if waitio || netpollcheckerr(pd, mode) == 0 {
 		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
 	}
 	// be careful to not lose concurrent pdReady notification
+	//解绑当前goroutine与fd
 	old := atomic.Xchguintptr(gpp, 0)
+	//如果解绑失败
 	if old > pdWait {
 		throw("runtime: corrupted polldesc")
 	}

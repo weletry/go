@@ -30,6 +30,7 @@ var (
 )
 
 func netpollinit() {
+	//创建一个提epoll实例
 	epfd = epollcreate1(_EPOLL_CLOEXEC)
 	if epfd < 0 {
 		epfd = epollcreate(1024)
@@ -123,6 +124,7 @@ func netpoll(delay int64) gList {
 	}
 	var events [128]epollevent
 retry:
+	//等待事件变更
 	n := epollwait(epfd, &events[0], int32(len(events)), waitms)
 	if n < 0 {
 		if n != -_EINTR {
@@ -136,6 +138,7 @@ retry:
 		}
 		goto retry
 	}
+	//把所有变更的fd绑定g
 	var toRun gList
 	for i := int32(0); i < n; i++ {
 		ev := &events[i]
