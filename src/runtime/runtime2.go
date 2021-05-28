@@ -32,20 +32,24 @@ const (
 
 	// _Gidle means this goroutine was just allocated and has not
 	// yet been initialized.
+	//刚刚被分配并且还没有被初始化
 	_Gidle = iota // 0
 
 	// _Grunnable means this goroutine is on a run queue. It is
 	// not currently executing user code. The stack is not owned.
+	//当前Goroutine在运行队列中，但没有执行代码及并没有拥有栈
 	_Grunnable // 1
 
 	// _Grunning means this goroutine may execute user code. The
 	// stack is owned by this goroutine. It is not on a run queue.
 	// It is assigned an M and a P (g.m and g.m.p are valid).
+	//可以执行代码，拥有栈的所有权，被分配了线程M及处理器P,不在运行列表上
 	_Grunning // 2
 
 	// _Gsyscall means this goroutine is executing a system call.
 	// It is not executing user code. The stack is owned by this
 	// goroutine. It is not on a run queue. It is assigned an M.
+	//正在执行系统调用，拥有栈的所有权，没有执行用户代码，被赋予了内核线程 M 但是不在运行队列上
 	_Gsyscall // 3
 
 	// _Gwaiting means this goroutine is blocked in the runtime.
@@ -56,9 +60,10 @@ const (
 	// write parts of the stack under the appropriate channel
 	// lock. Otherwise, it is not safe to access the stack after a
 	// goroutine enters _Gwaiting (e.g., it may get moved).
+	//由于 运行时被阻塞，没有执行用户代码，并且没不在运行队列上，不拥有栈的所有机，但这会被记录在别的地方，eg(channal中)，如果需要唤醒的话，可以调用ready()
 	_Gwaiting // 4
 
-	// _Gmoribund_unused is currently unused, but hardcoded in gdb
+	// _Gmoribund_unused is currentxly unused, but hardcoded in gdb
 	// scripts.
 	_Gmoribund_unused // 5
 
@@ -68,6 +73,7 @@ const (
 	// allocated. The G and its stack (if any) are owned by the M
 	// that is exiting the G or that obtained the G from the free
 	// list.
+	//当前没有被使用。可能是刚退出，在free list中，或者刚被初始化。这个状态下没有执行用户代码，这不一定有stack内存，这时G和他的栈都是属于线程。
 	_Gdead // 6
 
 	// _Genqueue_unused is currently unused.
@@ -76,6 +82,7 @@ const (
 	// _Gcopystack means this goroutine's stack is being moved. It
 	// is not executing user code and is not on a run queue. The
 	// stack is owned by the goroutine that put it in _Gcopystack.
+	//栈正在被拷贝，没有执行代码，不在运行队列上.这个栈是属于goroutine的
 	_Gcopystack // 8
 
 	// _Gpreempted means this goroutine stopped itself for a
@@ -83,6 +90,7 @@ const (
 	// yet responsible for ready()ing it. Some suspendG must CAS
 	// the status to _Gwaiting to take responsibility for
 	// ready()ing this G.
+	//由于抢占而被阻塞，没有执行用户代码并且不在运行队列上，等待唤醒
 	_Gpreempted // 9
 
 	// _Gscan combined with one of the above states other than
@@ -96,6 +104,7 @@ const (
 	//
 	// atomicstatus&~Gscan gives the state the goroutine will
 	// return to when the scan completes.
+	//GC 正在扫描栈空间，没有执行代码，可以与其他状态同时存在
 	_Gscan          = 0x1000
 	_Gscanrunnable  = _Gscan + _Grunnable  // 0x1001
 	_Gscanrunning   = _Gscan + _Grunning   // 0x1002
@@ -114,6 +123,7 @@ const (
 	//
 	// The P is owned by the idle list or by whatever is
 	// transitioning its state. Its run queue is empty.
+	//处理器没有运行用户代码或者调度器，被空闲队列或者改变其状态的结构持有，运行队列为空
 	_Pidle = iota
 
 	// _Prunning means a P is owned by an M and is being used to
@@ -323,11 +333,11 @@ type gobuf struct {
 	// and restores it doesn't need write barriers. It's still
 	// typed as a pointer so that any other writes from Go get
 	// write barriers.
-	sp   uintptr
-	pc   uintptr
-	g    guintptr
+	sp   uintptr  //栈指针
+	pc   uintptr  //程序计程器
+	g    guintptr //持有runtime.gobuf的Goroutine
 	ctxt unsafe.Pointer
-	ret  sys.Uintreg
+	ret  sys.Uintreg //系统调用的返回值
 	lr   uintptr
 	bp   uintptr // for framepointer-enabled architectures
 }
@@ -409,28 +419,28 @@ type g struct {
 	// stackguard1 is the stack pointer compared in the C stack growth prologue.
 	// It is stack.lo+StackGuard on g0 and gsignal stacks.
 	// It is ~0 on other goroutine stacks, to trigger a call to morestackc (and crash).
-	stack       stack   // offset known to runtime/cgo
-	stackguard0 uintptr // offset known to liblink
+	stack       stack   // 当前 Goroutine 的栈内存范围 [stack.lo, stack.hi) offset known to runtime/cgo
+	stackguard0 uintptr // 用于调度器抢占式调度  offset known to liblink
 	stackguard1 uintptr // offset known to liblink
 
-	_panic       *_panic // innermost panic - offset known to liblink
-	_defer       *_defer // innermost defer
-	m            *m      // current m; offset known to arm liblink
-	sched        gobuf
+	_panic       *_panic        //最内侧的 panic 结构体  innermost panic - offset known to liblink
+	_defer       *_defer        //最内侧的延迟函数结构体 innermost defer
+	m            *m             // 当前 Goroutine 占用的线程，可能为空； current m; offset known to arm liblink
+	sched        gobuf          //存储 Goroutine 的调度相关的数据
 	syscallsp    uintptr        // if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc    uintptr        // if status==Gsyscall, syscallpc = sched.pc to use during gc
 	stktopsp     uintptr        // expected sp at top of stack, to check in traceback
 	param        unsafe.Pointer // passed parameter on wakeup
-	atomicstatus uint32
-	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
-	goid         int64
+	atomicstatus uint32         //Goroutine 的状态
+	stackLock    uint32         // sigprof/scang lock; TODO: fold in to atomicstatus
+	goid         int64          // Goroutine 的 ID，该字段对开发者不可见
 	schedlink    guintptr
 	waitsince    int64      // approx time when the g become blocked
 	waitreason   waitReason // if status==Gwaiting
 
-	preempt       bool // preemption signal, duplicates stackguard0 = stackpreempt
-	preemptStop   bool // transition to _Gpreempted on preemption; otherwise, just deschedule
-	preemptShrink bool // shrink stack at synchronous safe point
+	preempt       bool // // 抢占信号    preemption signal, duplicates stackguard0 = stackpreempt
+	preemptStop   bool // 抢占时将状态修改成 `_Gpreempted`      transition to _Gpreempted on preemption; otherwise, just deschedule
+	preemptShrink bool //在同步安全点收缩栈   shrink stack at synchronous safe point
 
 	// asyncSafePoint is set if g is stopped at an asynchronous
 	// safe point. This means there are frames on the stack

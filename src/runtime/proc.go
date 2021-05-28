@@ -589,6 +589,7 @@ func schedinit() {
 		_g_.racectx, raceprocctx0 = raceinit()
 	}
 
+	//最大线程数是1W
 	sched.maxmcount = 10000
 
 	// The world starts stopped.
@@ -614,6 +615,7 @@ func schedinit() {
 	gcinit()
 
 	lock(&sched.lock)
+	//最后network poll的时间【
 	sched.lastpoll = uint64(nanotime())
 	procs := ncpu
 	if n, ok := atoi32(gogetenv("GOMAXPROCS")); ok && n > 0 {
@@ -4706,6 +4708,7 @@ func procresize(nprocs int32) *p {
 	assertLockHeld(&sched.lock)
 	assertWorldStopped()
 
+	//之前gomaxprocs的数量是多少。方便后面去数据的处理
 	old := gomaxprocs
 	if old < 0 || nprocs <= 0 {
 		throw("procresize: invalid arg")
@@ -4719,6 +4722,7 @@ func procresize(nprocs int32) *p {
 	if sched.procresizetime != 0 {
 		sched.totaltime += int64(old) * (now - sched.procresizetime)
 	}
+	//记录p变更的时间
 	sched.procresizetime = now
 
 	maskWords := (nprocs + 31) / 32
@@ -4728,6 +4732,8 @@ func procresize(nprocs int32) *p {
 		// Synchronize with retake, which could be running
 		// concurrently since it doesn't run on a P.
 		lock(&allpLock)
+
+		//对原来数组的扩缩容。这产做的目的是不关闭原来已经启动的P
 		if nprocs <= int32(cap(allp)) {
 			allp = allp[:nprocs]
 		} else {

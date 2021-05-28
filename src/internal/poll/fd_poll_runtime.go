@@ -35,7 +35,10 @@ type pollDesc struct {
 var serverInit sync.Once
 
 func (pd *pollDesc) init(fd *FD) error {
+	//once init epoll instance
 	serverInit.Do(runtime_pollServerInit)
+	//fd作为一个入参
+	//ctx: runtime.pollDesc,挂载在epoll上的信息
 	ctx, errno := runtime_pollOpen(uintptr(fd.Sysfd))
 	if errno != 0 {
 		if ctx != 0 {

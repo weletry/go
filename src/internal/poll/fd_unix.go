@@ -52,17 +52,21 @@ type FD struct {
 // Set pollable to true if fd should be managed by runtime netpoll.
 func (fd *FD) Init(net string, pollable bool) error {
 	// We don't actually care about the various network types.
+	//判断fd是否是文件（有时可能是"tcp"）
 	if net == "file" {
 		fd.isFile = true
 	}
+	//如果不需要提pollable能力的话，必须使用BIO
 	if !pollable {
 		fd.isBlocking = 1
 		return nil
 	}
+	//把fd挂载到epoll中
 	err := fd.pd.init(fd)
 	if err != nil {
 		// If we could not initialize the runtime poller,
 		// assume we are using blocking mode.
+		//如果没有办法正常注册到epoll中，那就IO的模式使用为BIO方式
 		fd.isBlocking = 1
 	}
 	return err
@@ -258,10 +262,12 @@ func (fd *FD) ReadMsg(p []byte, oob []byte) (int, int, int, syscall.Sockaddr, er
 
 // Write implements io.Writer.
 func (fd *FD) Write(p []byte) (int, error) {
+	//写fd的时候，会先上一个锁
 	if err := fd.writeLock(); err != nil {
 		return 0, err
 	}
 	defer fd.writeUnlock()
+	//当前fd与别的goroutine解绑
 	if err := fd.pd.prepareWrite(fd.isFile); err != nil {
 		return 0, err
 	}
@@ -271,6 +277,7 @@ func (fd *FD) Write(p []byte) (int, error) {
 		if fd.IsStream && max-nn > maxRW {
 			max = nn + maxRW
 		}
+		//先尝试一下写io
 		n, err := ignoringEINTRIO(syscall.Write, fd.Sysfd, p[nn:max])
 		if n > 0 {
 			nn += n
@@ -278,7 +285,9 @@ func (fd *FD) Write(p []byte) (int, error) {
 		if nn == len(p) {
 			return nn, err
 		}
+		//写io失败，同时也使用了poll的模式
 		if err == syscall.EAGAIN && fd.pd.pollable() {
+			//调用runtime_pollWait，同时也会把当前goroutine挂起，直到io ready
 			if err = fd.pd.waitWrite(fd.isFile); err == nil {
 				continue
 			}

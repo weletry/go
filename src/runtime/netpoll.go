@@ -76,17 +76,17 @@ type pollDesc struct {
 	// in a lock-free way by all operations.
 	// NOTE(dvyukov): the following code uses uintptr to store *g (rg/wg),
 	// that will blow up when GC starts moving objects.
-	lock    mutex // protects the following fields
-	fd      uintptr
-	closing bool
-	everr   bool      // marks event scanning error happened
+	lock    mutex     // protects the following fields
+	fd      uintptr   //当前fd地址
+	closing bool      //是否已经closing
+	everr   bool      // 标记fd是否出现了err
 	user    uint32    // user settable cookie
 	rseq    uintptr   // protects from stale read timers
-	rg      uintptr   // pdReady, pdWait, G waiting for read or nil
+	rg      uintptr   // pdReady, pdWait, G waiting for read or nil， 记录pd状态或者是准备读的G的gid
 	rt      timer     // read deadline timer (set if rt.f != nil)
 	rd      int64     // read deadline
 	wseq    uintptr   // protects from stale write timers
-	wg      uintptr   // pdReady, pdWait, G waiting for write or nil
+	wg      uintptr   // pdReady, pdWait, G waiting for write or nil  记录pd状态或者是准备写的G的gid
 	wt      timer     // write deadline timer
 	wd      int64     // write deadline
 	self    *pollDesc // storage for indirect interface. See (*pollDesc).makeArg.
@@ -141,7 +141,7 @@ func poll_runtime_isPollServerDescriptor(fd uintptr) bool {
 
 //go:linkname poll_runtime_pollOpen internal/poll.runtime_pollOpen
 func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
-	//从预配置的内存中拿到一个pollDesc，然后重置pollDesc的信息
+	//从预分配的内存中拿到一个pollDesc，这个块内存不会被GC回收的
 	pd := pollcache.alloc()
 	lock(&pd.lock)
 	if pd.wg != 0 && pd.wg != pdReady {
@@ -150,18 +150,21 @@ func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
 	if pd.rg != 0 && pd.rg != pdReady {
 		throw("runtime: blocked read on free polldesc")
 	}
+	//fd号
 	pd.fd = fd
+	//fd的状态
 	pd.closing = false
 	pd.everr = false
+	//初始化读的状态
 	pd.rseq++
 	pd.rg = 0
 	pd.rd = 0
+	//初始化写的状态
 	pd.wseq++
 	pd.wg = 0
 	pd.wd = 0
 	pd.self = pd
 	unlock(&pd.lock)
-
 	var errno int32
 	//把fd及pollDesc这些信息放入到epoll的的红黑树中
 	errno = netpollopen(fd, pd)
@@ -369,11 +372,13 @@ func poll_runtime_pollUnblock(pd *pollDesc) {
 func netpollready(toRun *gList, pd *pollDesc, mode int32) {
 	var rg, wg *g
 	if mode == 'r' || mode == 'r'+'w' {
+		//这个方法与netpollblock的方法是相反的，主要目的是把data的状态重置为ready
 		rg = netpollunblock(pd, 'r', true)
 	}
 	if mode == 'w' || mode == 'r'+'w' {
 		wg = netpollunblock(pd, 'w', true)
 	}
+	//把block的G加入到列表中（这个时候还不是runnable）
 	if rg != nil {
 		toRun.push(rg)
 	}
@@ -418,6 +423,7 @@ func netpollgoready(gp *g, traceskip int) {
 // waitio - wait only for completed IO, ignore errors
 func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	gpp := &pd.rg
+	//如果是写模式的话，获取写模式的这个状态
 	if mode == 'w' {
 		gpp = &pd.wg
 	}
@@ -425,7 +431,7 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// set the gpp semaphore to pdWait
 	for {
 		old := *gpp
-		//IO 已经ready
+		//发现IO 已经ready,直接返回，不需要再写
 		if old == pdReady {
 			*gpp = 0
 			return true
@@ -465,9 +471,11 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 
 	for {
 		old := *gpp
+		//发现原来的状态已经ready，表示当前没有g在运行
 		if old == pdReady {
 			return nil
 		}
+		//这是一种异常情况，
 		if old == 0 && !ioready {
 			// Only set pdReady for ioready. runtime_pollWait
 			// will check for timeout/cancel before waiting.
@@ -477,10 +485,12 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 		if ioready {
 			new = pdReady
 		}
+		//把当前状态设置为ready
 		if atomic.Casuintptr(gpp, old, new) {
 			if old == pdWait {
 				old = 0
 			}
+			//返回挂载的的gid
 			return (*g)(unsafe.Pointer(old))
 		}
 	}

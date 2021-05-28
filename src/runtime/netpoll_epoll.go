@@ -104,6 +104,10 @@ func netpollBreak() {
 // delay < 0: blocks indefinitely
 // delay == 0: does not block, just polls
 // delay > 0: block for up to that many nanoseconds
+//netpoll 检测fd是否都已经ready了，并返回一批goroutine,同时这批goroutine将来会变成runnable
+//delay < 0, 会block
+//delay == 0; 不会block
+//delay >0 : 表示block多久
 func netpoll(delay int64) gList {
 	if epfd == -1 {
 		return gList{}
@@ -163,6 +167,11 @@ retry:
 		}
 
 		var mode int32
+		//监听的事件有：
+		//EPOLLIN:fd可读
+		//EPOLLOUT: fd可写
+		//EPOLLRDHUP：fd被挂断
+		//EPOLLET: 设置边缘触发
 		if ev.events&(_EPOLLIN|_EPOLLRDHUP|_EPOLLHUP|_EPOLLERR) != 0 {
 			mode += 'r'
 		}
