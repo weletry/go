@@ -352,6 +352,10 @@ type gobuf struct {
 //
 // sudogs are allocated from a special pool. Use acquireSudog and
 // releaseSudog to allocate and free them.
+//sudo代表在等待队列里面的g, 比如: 向channel发送/接收
+//之所以需要sudo是因为g和同步对象之间的关系是多对多的.一个g可能会在多个等待队列中,所以一个g可能被打包为多个sudo
+//多个g也可以等待在同一个同步对象上,因此对于一个同步对象就会有很多个sudog(白话:他等其它一群人,其它一群人等他)
+//sudo是从一个特殊的池中进行分配的,用acquireSudog和releaseSudo来分配和释放sudog的
 type sudog struct {
 	// The following fields are protected by the hchan.lock of the
 	// channel this sudog is blocking on. shrinkstack depends on
@@ -367,13 +371,16 @@ type sudog struct {
 	// For channels, waitlink is only accessed by g.
 	// For semaphores, all fields (including the ones above)
 	// are only accessed when holding a semaRoot lock.
-
+	//下面这些字段不会被并发访问
+	//对于channels. waitlink只会被g访问
+	//对于信号量,所有字段包括上面的那些字段只在持有semaRoot锁时才可以访问.
 	acquiretime int64
 	releasetime int64
 	ticket      uint32
 
 	// isSelect indicates g is participating in a select, so
 	// g.selectDone must be CAS'd to win the wake-up race.
+	//表示g是否正在select.所以哪个CAS这个字段成功,谁就会被wake-up
 	isSelect bool
 
 	// success indicates whether communication over channel c
@@ -426,16 +433,16 @@ type g struct {
 	_panic       *_panic        //最内侧的 panic 结构体  innermost panic - offset known to liblink
 	_defer       *_defer        //最内侧的延迟函数结构体 innermost defer
 	m            *m             // 当前 Goroutine 占用的线程，可能为空； current m; offset known to arm liblink
-	sched        gobuf          //存储 Goroutine 的调度相关的数据
+	sched        gobuf          //存储 Goroutine 的现场数据
 	syscallsp    uintptr        // if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc    uintptr        // if status==Gsyscall, syscallpc = sched.pc to use during gc
 	stktopsp     uintptr        // expected sp at top of stack, to check in traceback
-	param        unsafe.Pointer // passed parameter on wakeup
+	param        unsafe.Pointer // wakeup时传入的参数
 	atomicstatus uint32         //Goroutine 的状态
 	stackLock    uint32         // sigprof/scang lock; TODO: fold in to atomicstatus
 	goid         int64          // Goroutine 的 ID，该字段对开发者不可见
 	schedlink    guintptr
-	waitsince    int64      // approx time when the g become blocked
+	waitsince    int64      // g 被阻塞之后的近似时间
 	waitreason   waitReason // if status==Gwaiting
 
 	preempt       bool // // 抢占信号    preemption signal, duplicates stackguard0 = stackpreempt
@@ -471,15 +478,15 @@ type g struct {
 	sigcode0       uintptr
 	sigcode1       uintptr
 	sigpc          uintptr
-	gopc           uintptr         // pc of go statement that created this goroutine
+	gopc           uintptr         // 创建该goroutine的语句的指令地址
 	ancestors      *[]ancestorInfo // ancestor information goroutine(s) that created this goroutine (only used if debug.tracebackancestors)
-	startpc        uintptr         // pc of goroutine function
+	startpc        uintptr         // goroutine函数的指令地址
 	racectx        uintptr
 	waiting        *sudog         // sudog structures this g is waiting on (that have a valid elem ptr); in lock order
 	cgoCtxt        []uintptr      // cgo traceback context
 	labels         unsafe.Pointer // profiler labels
-	timer          *timer         // cached timer for time.Sleep
-	selectDone     uint32         // are we participating in a select and did someone win the race?
+	timer          *timer         // 缓存的定时器
+	selectDone     uint32         // 该g是否正在参与select , 是否已经有人从select 中胜出
 
 	// Per-G GC state
 
@@ -494,7 +501,7 @@ type g struct {
 }
 
 type m struct {
-	g0      *g     // goroutine with scheduling stack
+	g0      *g     // 用来执行指令的goroutine
 	morebuf gobuf  // gobuf arg to morestack
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 
@@ -505,7 +512,7 @@ type m struct {
 	sigmask       sigset       // storage for saved signal mask
 	tls           [6]uintptr   // thread-local storage (for x86 extern register)
 	mstartfn      func()
-	curg          *g       // current running goroutine
+	curg          *g       // 当前运行的用户goroutine
 	caughtsig     guintptr // goroutine running during fatal signal
 	p             puintptr // attached p for executing go code (nil if not executing go code)
 	nextp         puintptr
@@ -517,16 +524,16 @@ type m struct {
 	locks         int32
 	dying         int32
 	profilehz     int32
-	spinning      bool // m is out of work and is actively looking for work
-	blocked       bool // m is blocked on a note
+	spinning      bool // m处理空闲状态,正在努力找工作
+	blocked       bool // m被block上note上
 	newSigstack   bool // minit on C thread called sigaltstack
 	printlock     int8
-	incgo         bool   // m is executing a cgo call
+	incgo         bool   // m 正在执行cgo call
 	freeWait      uint32 // if == 0, safe to free g0 and delete m (atomic)
 	fastrand      [2]uint32
 	needextram    bool
 	traceback     uint8
-	ncgocall      uint64      // number of cgo calls in total
+	ncgocall      uint64      // cgo调用总计数
 	ncgo          int32       // number of cgo calls currently in progress
 	cgoCallersUse uint32      // if non-zero, cgoCallers in use temporarily
 	cgoCallers    *cgoCallers // cgo traceback if crashing in cgo call
@@ -538,7 +545,7 @@ type m struct {
 	createstack   [32]uintptr // stack that created this thread.
 	lockedExt     uint32      // tracking for external LockOSThread
 	lockedInt     uint32      // tracking for internal lockOSThread
-	nextwaitm     muintptr    // next m waiting for lock
+	nextwaitm     muintptr    // 正在等待锁的下一个m
 	waitunlockf   func(*g, unsafe.Pointer) bool
 	waitlock      unsafe.Pointer
 	waittraceev   byte
@@ -587,10 +594,10 @@ type p struct {
 	id          int32
 	status      uint32 // one of pidle/prunning/...
 	link        puintptr
-	schedtick   uint32     // incremented on every scheduler call
-	syscalltick uint32     // incremented on every system call
-	sysmontick  sysmontick // last tick observed by sysmon
-	m           muintptr   // back-link to associated m (nil if idle)
+	schedtick   uint32     // 每次被schedule的时候,都会+1
+	syscalltick uint32     // 每次系统调用都会+1
+	sysmontick  sysmontick // sysmon线程上欠观察到的tick时间
+	m           muintptr   // 和相关联的 m 的反向指针，如果 p 是 idle 的话，那这个指针是 nil
 	mcache      *mcache
 	pcache      pageCache
 	raceprocctx uintptr
@@ -603,6 +610,7 @@ type p struct {
 	goidcacheend uint64
 
 	// Queue of runnable goroutines. Accessed without lock.
+	//runnable状态的goroutine,访问时是不加锁的
 	runqhead uint32
 	runqtail uint32
 	runq     [256]guintptr
@@ -615,6 +623,8 @@ type p struct {
 	// unit and eliminates the (potentially large) scheduling
 	// latency that otherwise arises from adding the ready'd
 	// goroutines to the end of the run queue.
+	//如果当前字段不为空,表示这是一个被当前G个性为ready状态的 runnable G, 相比runq中的G有更加高的优先级
+	//如果当前G的还有剩余的可用时间,那么就应该运行在这个G运行之后,该G会继承当前G的剩余时间
 	runnext guintptr
 
 	// Available G's (status == Gdead)
@@ -672,6 +682,7 @@ type p struct {
 	// selected for immediate execution by
 	// gcController.findRunnableGCWorker. When scheduling other goroutines,
 	// this field must be set to gcMarkWorkerNotWorker.
+	//当前票房worker的开始时间,单位纳秒
 	gcMarkWorkerMode gcMarkWorkerMode
 	// gcMarkWorkerStartTime is the nanotime() at which the most recent
 	// mark worker started.
@@ -726,8 +737,10 @@ type p struct {
 	pad cpu.CacheLinePad
 }
 
+//全局调度器,全局只有一个schedt类型的实例
 type schedt struct {
 	// accessed atomically. keep at top to ensure alignment on 32-bit systems.
+	//这两个亦是需要 以原子访问,保持在struct顶部,以使其在32位系统上可以对齐
 	goidgen   uint64
 	lastpoll  uint64 // time of last network poll, 0 if currently polling
 	pollUntil uint64 // time to which current poll is sleeping
@@ -741,17 +754,18 @@ type schedt struct {
 	nmidle       int32    // number of idle m's waiting for work
 	nmidlelocked int32    // number of locked m's waiting for work
 	mnext        int64    // number of m's that have been created and next M ID
-	maxmcount    int32    // maximum number of m's allowed (or die)
+	maxmcount    int32    // maximum number of m's allowed (or die) 最大m的数量
 	nmsys        int32    // number of system m's not counted for deadlock
 	nmfreed      int64    // cumulative number of freed m's
 
 	ngsys uint32 // number of system goroutines; updated atomically
 
-	pidle      puintptr // idle p's
+	pidle      puintptr // idle p's 空闲提p
 	npidle     uint32
 	nmspinning uint32 // See "Worker thread parking/unparking" comment in proc.go.
 
 	// Global runnable queue.
+	//全局的可运行G队列
 	runq     gQueue
 	runqsize int32
 
@@ -768,6 +782,7 @@ type schedt struct {
 	}
 
 	// Global cache of dead G's.
+
 	gFree struct {
 		lock    mutex
 		stack   gList // Gs with stacks
@@ -776,15 +791,19 @@ type schedt struct {
 	}
 
 	// Central cache of sudog structs.
+	//sudog结构的集中缓存
 	sudoglock  mutex
 	sudogcache *sudog
 
 	// Central pool of available defer structs of different sizes.
+	//不同大小的可用的defer struct的集中缓存池
 	deferlock mutex
 	deferpool [5]*_defer
 
 	// freem is the list of m's waiting to be freed when their
 	// m.exited is set. Linked through m.freelink.
+	// 被设置了 m.exited 标记之后的 m，这些 m 正在 freem 这个链表上等待被 free
+	// 链表用 m.freelink 字段进行链接
 	freem *m
 
 	gcwaiting  uint32 // gc is waiting to run
