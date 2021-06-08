@@ -4572,6 +4572,7 @@ func setcpuprofilerate(hz int32) {
 func (pp *p) init(id int32) {
 	pp.id = id
 	pp.status = _Pgcstop
+	//清空有等候队列里面的g,这个位置是init
 	pp.sudogcache = pp.sudogbuf[:0]
 	for i := range pp.deferpool {
 		pp.deferpool[i] = pp.deferpoolbuf[i][:0]
@@ -4733,7 +4734,7 @@ func procresize(nprocs int32) *p {
 		// concurrently since it doesn't run on a P.
 		lock(&allpLock)
 
-		//对原来数组的扩缩容。这产做的目的是不关闭原来已经启动的P
+		//对原来数组的扩缩容。这样做的目的是不关闭原来已经启动的P
 		if nprocs <= int32(cap(allp)) {
 			allp = allp[:nprocs]
 		} else {
@@ -4770,9 +4771,12 @@ func procresize(nprocs int32) *p {
 		atomicstorep(unsafe.Pointer(&allp[i]), unsafe.Pointer(pp))
 	}
 
+	//获取当前g
 	_g_ := getg()
+	//如果当前运行的g绑定的p不为空并且p的id是小于nprocs
 	if _g_.m.p != 0 && _g_.m.p.ptr().id < nprocs {
 		// continue to use the current P
+		//继续使用当前的P
 		_g_.m.p.ptr().status = _Prunning
 		_g_.m.p.ptr().mcache.prepareForSweep()
 	} else {
