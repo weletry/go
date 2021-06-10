@@ -1227,6 +1227,9 @@ func mstart1() {
 	// for terminating the thread.
 	// We're never coming back to mstart1 after we call schedule,
 	// so other calls can reuse the current frame.
+
+	//这个是一个never return的关键点.
+	//不再return 调用call schedule之后.其它调用可以复用当前 thread frame
 	save(getcallerpc(), getcallersp())
 	asminit()
 	minit()
@@ -1241,10 +1244,12 @@ func mstart1() {
 		fn()
 	}
 
+	//如果不是m0的话,会绑定一个p
 	if _g_.m != &m0 {
 		acquirep(_g_.m.nextp.ptr())
 		_g_.m.nextp = 0
 	}
+	//进行调度操作
 	schedule()
 }
 
@@ -2980,6 +2985,7 @@ func injectglist(glist *gList) {
 // One round of scheduler: find a runnable goroutine and execute it.
 // Never returns.
 func schedule() {
+
 	_g_ := getg()
 
 	if _g_.m.locks != 0 {
@@ -4799,6 +4805,7 @@ func procresize(nprocs int32) *p {
 		p := allp[0]
 		p.m = 0
 		p.status = _Pidle
+		//m0绑定p0
 		acquirep(p)
 		if trace.enabled {
 			traceGoStart()
@@ -4827,13 +4834,16 @@ func procresize(nprocs int32) *p {
 	var runnablePs *p
 	for i := nprocs - 1; i >= 0; i-- {
 		p := allp[i]
+		//当前运行的p不需要入回到空闲队列
 		if _g_.m.p.ptr() == p {
 			continue
 		}
 		p.status = _Pidle
+		//如果p空,把p放回到空间队列
 		if runqempty(p) {
 			pidleput(p)
 		} else {
+			//如果p不空闲的话,需要获取一个空闲m来绑定.
 			p.m.set(mget())
 			p.link.set(runnablePs)
 			runnablePs = p
