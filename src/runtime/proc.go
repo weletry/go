@@ -4735,6 +4735,7 @@ func procresize(nprocs int32) *p {
 	maskWords := (nprocs + 31) / 32
 
 	// Grow allp if necessary.
+	//如果需要,去grow进行扩容
 	if nprocs > int32(len(allp)) {
 		// Synchronize with retake, which could be running
 		// concurrently since it doesn't run on a P.
@@ -4768,6 +4769,7 @@ func procresize(nprocs int32) *p {
 	}
 
 	// initialize new P's
+	//
 	for i := old; i < nprocs; i++ {
 		pp := allp[i]
 		if pp == nil {
@@ -4779,7 +4781,7 @@ func procresize(nprocs int32) *p {
 
 	//获取当前g
 	_g_ := getg()
-	//如果当前运行的g绑定的p不为空并且p的id是小于nprocs
+	//如果当前运行的g绑定的p不为空并且p的id是小于nprocs.在扩容的时候?
 	if _g_.m.p != 0 && _g_.m.p.ptr().id < nprocs {
 		// continue to use the current P
 		//继续使用当前的P
@@ -4801,6 +4803,7 @@ func procresize(nprocs int32) *p {
 			}
 			_g_.m.p.ptr().m = 0
 		}
+		//m0 = p0
 		_g_.m.p = 0
 		p := allp[0]
 		p.m = 0
@@ -4818,6 +4821,7 @@ func procresize(nprocs int32) *p {
 	// release resources from unused P's
 	for i := nprocs; i < old; i++ {
 		p := allp[i]
+		//p的销毁
 		p.destroy()
 		// can't free P itself because it can be referenced by an M in syscall
 	}
