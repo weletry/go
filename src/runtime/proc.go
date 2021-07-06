@@ -3894,7 +3894,9 @@ func malg(stacksize int32) *g {
 }
 
 // Create a new g running fn with siz bytes of arguments.
+// 创建一个新g运行fun
 // Put it on the queue of g's waiting to run.
+//把创建的g推到waiting的队列中
 // The compiler turns a go statement into a call to this.
 //
 // The stack layout of this call is unusual: it assumes that the
@@ -3909,13 +3911,19 @@ func malg(stacksize int32) *g {
 //
 //go:nosplit
 func newproc(siz int32, fn *funcval) {
+	//参数的在栈中的大小
 	argp := add(unsafe.Pointer(&fn), sys.PtrSize)
+	//获取当前的g
 	gp := getg()
+	//调用方的pc
 	pc := getcallerpc()
 	systemstack(func() {
+		//创建了一个新的g
 		newg := newproc1(fn, argp, siz, gp, pc)
 
+		//获取当前绑定p
 		_p_ := getg().m.p.ptr()
+		//把g放入到当前p的本地队列.如果本地队列放不下的话,放入全局队列
 		runqput(_p_, newg, true)
 
 		if mainStarted {
@@ -3940,6 +3948,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 		_g_.m.throwing = -1 // do not dump full stacks
 		throw("go of nil func value")
 	}
+	//防止当前线程被抢占
 	acquirem() // disable preemption because it can be holding p in a local var
 	siz := narg
 	siz = (siz + 7) &^ 7
@@ -3953,10 +3962,12 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	}
 
 	_p_ := _g_.m.p.ptr()
+	//这个位置复用go,以免重新创建新的.
 	newg := gfget(_p_)
 	if newg == nil {
 		newg = malg(_StackMin)
 		casgstatus(newg, _Gidle, _Gdead)
+		//一个Gdead状态的g队列,以免gc的时候,还会扫这引起g
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
 	if newg.stack.hi == 0 {
@@ -3999,6 +4010,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	memclrNoHeapPointers(unsafe.Pointer(&newg.sched), unsafe.Sizeof(newg.sched))
 	newg.sched.sp = sp
 	newg.stktopsp = sp
+	//
 	newg.sched.pc = funcPC(goexit) + sys.PCQuantum // +PCQuantum so that previous instruction is in same function
 	newg.sched.g = guintptr(unsafe.Pointer(newg))
 	gostartcallfn(&newg.sched, fn)
@@ -4029,6 +4041,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	if trace.enabled {
 		traceGoCreate(newg, newg.startpc)
 	}
+	//当前线程可以被抢占
 	releasem(_g_.m)
 
 	return newg
@@ -5698,6 +5711,7 @@ func runqput(_p_ *p, gp *g, next bool) {
 	if next {
 	retryNext:
 		oldnext := _p_.runnext
+		//这个抢占?
 		if !_p_.runnext.cas(oldnext, guintptr(unsafe.Pointer(gp))) {
 			goto retryNext
 		}
@@ -5711,11 +5725,13 @@ func runqput(_p_ *p, gp *g, next bool) {
 retry:
 	h := atomic.LoadAcq(&_p_.runqhead) // load-acquire, synchronize with consumers
 	t := _p_.runqtail
+	//已经多个256个goroutine了
 	if t-h < uint32(len(_p_.runq)) {
 		_p_.runq[t%uint32(len(_p_.runq))].set(gp)
 		atomic.StoreRel(&_p_.runqtail, t+1) // store-release, makes the item available for consumption
 		return
 	}
+	//把goroutine加入全局队列中
 	if runqputslow(_p_, gp, h, t) {
 		return
 	}
@@ -5734,6 +5750,7 @@ func runqputslow(_p_ *p, gp *g, h, t uint32) bool {
 	if n != uint32(len(_p_.runq)/2) {
 		throw("runqputslow: queue is not full")
 	}
+	//搬前面???的一部分到全局队列
 	for i := uint32(0); i < n; i++ {
 		batch[i] = _p_.runq[(h+i)%uint32(len(_p_.runq))].ptr()
 	}

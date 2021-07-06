@@ -21,6 +21,7 @@ func gostartcall(buf *gobuf, fn, ctxt unsafe.Pointer) {
 	}
 	sp -= sys.PtrSize
 	*(*uintptr)(unsafe.Pointer(sp)) = buf.pc
+
 	buf.sp = sp
 	buf.pc = uintptr(fn)
 	buf.ctxt = ctxt
