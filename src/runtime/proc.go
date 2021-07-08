@@ -3047,6 +3047,7 @@ top:
 		// Check the global runnable queue once in a while to ensure fairness.
 		// Otherwise two goroutines can completely occupy the local runqueue
 		// by constantly respawning each other.
+		//每61次就会在全局队列拿一个goroutine
 		if _g_.m.p.ptr().schedtick%61 == 0 && sched.runqsize > 0 {
 			lock(&sched.lock)
 			gp = globrunqget(_g_.m.p.ptr(), 1)
@@ -3054,10 +3055,12 @@ top:
 		}
 	}
 	if gp == nil {
+		//从本地队列拿g,
 		gp, inheritTime = runqget(_g_.m.p.ptr())
 		// We can see gp != nil here even if the M is spinning,
 		// if checkTimers added a local goroutine via goready.
 	}
+	//如果本地队列还是没有的.那么就运行findrunnable(全局队列拿/偷)
 	if gp == nil {
 		gp, inheritTime = findrunnable() // blocks until work is available
 	}
@@ -3088,6 +3091,7 @@ top:
 
 	// If about to schedule a not-normal goroutine (a GCworker or tracereader),
 	// wake a P if there is one.
+	//GC之后,需要叫醒P
 	if tryWakeP {
 		wakep()
 	}
@@ -3097,7 +3101,7 @@ top:
 		startlockedm(gp)
 		goto top
 	}
-
+	//运行当前gp
 	execute(gp, inheritTime)
 }
 
@@ -3352,6 +3356,7 @@ func goexit0(gp *g) {
 		print("invalid m->lockedInt = ", _g_.m.lockedInt, "\n")
 		throw("internal lockOSThread error")
 	}
+	//把g放入空闲队列中
 	gfput(_g_.m.p.ptr(), gp)
 	if locked {
 		// The goroutine may have locked this thread because
@@ -3368,6 +3373,7 @@ func goexit0(gp *g) {
 			_g_.m.lockedExt = 0
 		}
 	}
+	//开始下一轮的调度
 	schedule()
 }
 
@@ -3951,12 +3957,14 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	//防止当前线程被抢占
 	acquirem() // disable preemption because it can be holding p in a local var
 	siz := narg
+	//把size处理8的倍数,
 	siz = (siz + 7) &^ 7
 
 	// We could allocate a larger initial stack if necessary.
 	// Not worth it: this is almost always an error.
 	// 4*sizeof(uintreg): extra space added below
 	// sizeof(uintreg): caller's LR (arm) or return address (x86, in gostartcall).
+
 	if siz >= _StackMin-4*sys.RegSize-sys.RegSize {
 		throw("newproc: function arguments too large for new goroutine")
 	}
@@ -3965,7 +3973,9 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	//这个位置复用go,以免重新创建新的.
 	newg := gfget(_p_)
 	if newg == nil {
+		//栈init的时候,大小为2kb
 		newg = malg(_StackMin)
+		//重置当前g的状态
 		casgstatus(newg, _Gidle, _Gdead)
 		//一个Gdead状态的g队列,以免gc的时候,还会扫这引起g
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
@@ -3974,6 +3984,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 		throw("newproc1: newg missing stack")
 	}
 
+	//double check一下当前g的状态.
 	if readgstatus(newg) != _Gdead {
 		throw("newproc1: new g is not Gdead")
 	}
@@ -4090,6 +4101,7 @@ func gfput(_p_ *p, gp *g) {
 
 	stksize := gp.stack.hi - gp.stack.lo
 
+	//不是标准的栈长度的话,会被回收
 	if stksize != _FixedStack {
 		// non-standard stack size - free it.
 		stackfree(gp.stack)
@@ -4100,6 +4112,7 @@ func gfput(_p_ *p, gp *g) {
 
 	_p_.gFree.push(gp)
 	_p_.gFree.n++
+	//当长度上升到64个容易g, 就会降到32个.
 	if _p_.gFree.n >= 64 {
 		lock(&sched.gFree.lock)
 		for _p_.gFree.n >= 32 {
