@@ -138,6 +138,8 @@ const (
 // Stacks are assigned an order according to size.
 //     order = log_2(size/FixedStack)
 // There is a free list for each order.
+//全局的栈缓存_NumStackOrders = 4 ,分别表示2k,4k,8k,16k的栈内存
+//可以分配小于 32KB 的内存
 var stackpool [_NumStackOrders]struct {
 	item stackpoolItem
 	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
@@ -150,6 +152,7 @@ type stackpoolItem struct {
 }
 
 // Global pool of large stack spans.
+//分配大于 32KB 的栈空间
 var stackLarge struct {
 	lock mutex
 	free [heapAddrBits - pageShift]mSpanList // free lists by log_2(s.npages)
@@ -182,9 +185,12 @@ func stacklog2(n uintptr) int {
 // Allocates a stack from the free pool. Must be called with
 // stackpool[order].item.mu held.
 func stackpoolalloc(order uint8) gclinkptr {
+
 	list := &stackpool[order].item.span
+	//在链表中表头中拿一个.
 	s := list.first
 	lockWithRankMayAcquire(&mheap_.lock, lockRankMheap)
+	//如果链表也空的,那就需要重新申请内存了.
 	if s == nil {
 		// no free stacks. Allocate another span worth.
 		s = mheap_.allocManual(_StackCacheSize>>_PageShift, spanAllocStack)
@@ -854,8 +860,9 @@ func copystack(gp *g, newsize uintptr) {
 		print("copystack gp=", gp, " [", hex(old.lo), " ", hex(old.hi-used), " ", hex(old.hi), "]", " -> [", hex(new.lo), " ", hex(new.hi-used), " ", hex(new.hi), "]/", newsize, "\n")
 	}
 
-	// Compute adjustment.
+	// Compute adjustment.用于计算新栈与旧栈的地址差.
 	var adjinfo adjustinfo
+	//
 	adjinfo.old = old
 	adjinfo.delta = new.hi - old.hi
 
@@ -900,6 +907,7 @@ func copystack(gp *g, newsize uintptr) {
 
 	// Swap out old stack for new one
 	gp.stack = new
+	//计算出哪个位置哪个位置会被抢占????
 	gp.stackguard0 = new.lo + _StackGuard // NOTE: might clobber a preempt request
 	gp.sched.sp = new.hi - used
 	gp.stktopsp += adjinfo.delta
@@ -911,6 +919,7 @@ func copystack(gp *g, newsize uintptr) {
 	if stackPoisonCopy != 0 {
 		fillstack(old, 0xfc)
 	}
+	//free旧的栈
 	stackfree(old)
 }
 
@@ -935,6 +944,9 @@ func round2(x int32) int32 {
 // compiler doesn't check this.
 //
 //go:nowritebarrierrec
+//在编译的时候,会为函数调用插入 runtime.morestack 运行时检查栈是否够用.如果不够用的话,会调用该方法进行扩容
+//并分配更加大的栈内存及关联到新的栈
+//
 func newstack() {
 	thisg := getg()
 	// TODO: double check all gp. shouldn't be getg().
@@ -1046,6 +1058,7 @@ func newstack() {
 	}
 
 	// Allocate a bigger segment and move the stack.
+	//把容量扩大为原来的2倍
 	oldsize := gp.stack.hi - gp.stack.lo
 	newsize := oldsize * 2
 
@@ -1071,6 +1084,7 @@ func newstack() {
 
 	// The goroutine must be executing in order to call newstack,
 	// so it must be Grunning (or Gscanrunning).
+	//修改当前goroutine的状态的,从running修改copystack
 	casgstatus(gp, _Grunning, _Gcopystack)
 
 	// The concurrent GC will not scan the stack while we are doing the copy since
@@ -1079,7 +1093,9 @@ func newstack() {
 	if stackDebug >= 1 {
 		print("stack grow done\n")
 	}
+	//把当前goroutine的状态的,从running修改copystack
 	casgstatus(gp, _Gcopystack, _Grunning)
+	//重新调试
 	gogo(&gp.sched)
 }
 
@@ -1123,6 +1139,7 @@ func isShrinkStackSafe(gp *g) bool {
 //
 // gp must be stopped and we must own its stack. It may be in
 // _Grunning, but only if this is our own user G.
+//当发生gc的时候,会回收
 func shrinkstack(gp *g) {
 	if gp.stack.lo == 0 {
 		throw("missing stack in shrinkstack")
