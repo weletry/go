@@ -361,6 +361,7 @@ func stackalloc(n uint32) stack {
 	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
 		order := uint8(0)
 		n2 := n
+		//计算一下需要申请的内存是在哪个脚标
 		for n2 > _FixedStack {
 			order++
 			n2 >>= 1
@@ -372,6 +373,7 @@ func stackalloc(n uint32) stack {
 			// Also don't touch stackcache during gc
 			// as it's flushed concurrently.
 			lock(&stackpool[order].item.mu)
+			//申请内存
 			x = stackpoolalloc(order)
 			unlock(&stackpool[order].item.mu)
 		} else {
