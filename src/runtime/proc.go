@@ -3917,7 +3917,7 @@ func malg(stacksize int32) *g {
 //
 //go:nosplit
 func newproc(siz int32, fn *funcval) {
-	//参数的在栈中的大小
+	//原来方法的地址+一个指针,意思就是身高地址移动,可以获取caller的参数.
 	argp := add(unsafe.Pointer(&fn), sys.PtrSize)
 	//获取当前的g
 	gp := getg()
@@ -3926,12 +3926,11 @@ func newproc(siz int32, fn *funcval) {
 	systemstack(func() {
 		//创建了一个新的g
 		newg := newproc1(fn, argp, siz, gp, pc)
-
 		//获取当前绑定p
 		_p_ := getg().m.p.ptr()
 		//把g放入到当前p的本地队列.如果本地队列放不下的话,放入全局队列
 		runqput(_p_, newg, true)
-
+		//main M has started
 		if mainStarted {
 			wakep()
 		}
@@ -3957,7 +3956,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	//防止当前线程被抢占
 	acquirem() // disable preemption because it can be holding p in a local var
 	siz := narg
-	//把size处理8的倍数,
+	//把size处理成8的倍数,
 	siz = (siz + 7) &^ 7
 
 	// We could allocate a larger initial stack if necessary.
@@ -4021,12 +4020,16 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	memclrNoHeapPointers(unsafe.Pointer(&newg.sched), unsafe.Sizeof(newg.sched))
 	newg.sched.sp = sp
 	newg.stktopsp = sp
-	//
+	//把goexit这个方法增加到go routine的栈信息
 	newg.sched.pc = funcPC(goexit) + sys.PCQuantum // +PCQuantum so that previous instruction is in same function
+	//持有runtime.gobuf的Goroutine
 	newg.sched.g = guintptr(unsafe.Pointer(newg))
+	//记录go启动时调用哪个fn
 	gostartcallfn(&newg.sched, fn)
+	//记录创建goroutine调用者pc的位置.这个作用?为了处理异步返回的结果用?????
 	newg.gopc = callerpc
 	newg.ancestors = saveAncestors(callergp)
+	//go应该从哪开始运行
 	newg.startpc = fn.fn
 	if _g_.m.curg != nil {
 		newg.labels = _g_.m.curg.labels
@@ -4034,6 +4037,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	if isSystemGoroutine(newg, false) {
 		atomic.Xadd(&sched.ngsys, +1)
 	}
+	//把状态从dead --> grunnable
 	casgstatus(newg, _Gdead, _Grunnable)
 
 	if _p_.goidcache == _p_.goidcacheend {

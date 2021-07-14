@@ -19,6 +19,7 @@ func gostartcall(buf *gobuf, fn, ctxt unsafe.Pointer) {
 		sp -= sys.PtrSize
 		*(*uintptr)(unsafe.Pointer(sp)) = 0
 	}
+	//记录到返回地址中,运行完成后,就会返回到goexit函数中.
 	sp -= sys.PtrSize
 	*(*uintptr)(unsafe.Pointer(sp)) = buf.pc
 
