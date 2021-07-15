@@ -4116,7 +4116,7 @@ func gfput(_p_ *p, gp *g) {
 
 	_p_.gFree.push(gp)
 	_p_.gFree.n++
-	//当长度上升到64个容易g, 就会降到32个.
+	//当长度上升到64个g, 就会降到32个.
 	if _p_.gFree.n >= 64 {
 		lock(&sched.gFree.lock)
 		for _p_.gFree.n >= 32 {
@@ -5728,7 +5728,7 @@ func runqput(_p_ *p, gp *g, next bool) {
 	if next {
 	retryNext:
 		oldnext := _p_.runnext
-		//这个抢占?
+		//这把下一个goroutine 移动到队列后面.
 		if !_p_.runnext.cas(oldnext, guintptr(unsafe.Pointer(gp))) {
 			goto retryNext
 		}
@@ -5767,15 +5767,17 @@ func runqputslow(_p_ *p, gp *g, h, t uint32) bool {
 	if n != uint32(len(_p_.runq)/2) {
 		throw("runqputslow: queue is not full")
 	}
-	//搬前面???的一部分到全局队列
+	//搬前面的一半到到全局队列,这样会不会造成goroutine 饿死?
 	for i := uint32(0); i < n; i++ {
 		batch[i] = _p_.runq[(h+i)%uint32(len(_p_.runq))].ptr()
 	}
+	//把P中的LRQ剪半
 	if !atomic.CasRel(&_p_.runqhead, h, h+n) { // cas-release, commits consume
 		return false
 	}
 	batch[n] = gp
 
+	//把原来全局队列中的顺序打断
 	if randomizeScheduler {
 		for i := uint32(1); i <= n; i++ {
 			j := fastrandn(i + 1)
