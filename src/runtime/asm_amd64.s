@@ -97,6 +97,7 @@ TEXT runtime·rt0_go<ABIInternal>(SB),NOSPLIT,$0
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
+	// 创建g0
 	MOVQ	$runtime·g0(SB), DI
 	LEAQ	(-64*1024+104)(SP), BX
 	MOVQ	BX, g_stackguard0(DI)
@@ -189,12 +190,14 @@ needtls:
 	get_tls(BX)
 	MOVQ	$0x123, g(BX)
 	MOVQ	runtime·m0+m_tls(SB), AX
-	CMPQ	AX, $0x123
+	CMPQ	AX, $0x123g
 	JEQ 2(PC)
 	CALL	runtime·abort(SB)
 ok:
 	// set the per-goroutine and per-mach "registers"
+	//获取tls
 	get_tls(BX)
+	//把g0与m绑定
 	LEAQ	runtime·g0(SB), CX
 	MOVQ	CX, g(BX)
 	LEAQ	runtime·m0(SB), AX
@@ -213,6 +216,7 @@ ok:
 	MOVQ	AX, 8(SP)
 	CALL	runtime·args(SB)
 	CALL	runtime·osinit(SB)
+	//init调试器,同时也创建了一批p
 	CALL	runtime·schedinit(SB)
 
 	// create a new goroutine to start program
@@ -451,6 +455,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	MOVQ	m_g0(BX), BX
 	MOVQ	BX, g(CX)
 	MOVQ	(g_sched+gobuf_sp)(BX), SP
+	//重新调用newstack分配一个新栈
 	CALL	runtime·newstack(SB)
 	CALL	runtime·abort(SB)	// crash if newstack returns
 	RET

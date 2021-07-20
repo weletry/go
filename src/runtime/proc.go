@@ -596,8 +596,11 @@ func schedinit() {
 	worldStopped()
 
 	moduledataverify()
+	//栈管理器的init
 	stackinit()
+	//内存管理器的init
 	mallocinit()
+	//随机数的快速init
 	fastrandinit() // must run before mcommoninit
 	mcommoninit(_g_.m, -1)
 	cpuinit()       // must run before alginit
@@ -612,15 +615,19 @@ func schedinit() {
 	goargs()
 	goenvs()
 	parsedebugvars()
+	//gc的init
 	gcinit()
 
 	lock(&sched.lock)
 	//最后network poll的时间【
 	sched.lastpoll = uint64(nanotime())
+	//p的个数与cpu数
 	procs := ncpu
+	//可以通过环境变更控制这个数量的.
 	if n, ok := atoi32(gogetenv("GOMAXPROCS")); ok && n > 0 {
 		procs = n
 	}
+	//创建一批P
 	if procresize(procs) != nil {
 		throw("unknown runnable goroutine during bootstrap")
 	}
@@ -2516,11 +2523,13 @@ top:
 	}
 
 	// local runq
+	//如果本地队列有, 先从本地队列拿
 	if gp, inheritTime := runqget(_p_); gp != nil {
 		return gp, inheritTime
 	}
 
 	// global runq
+	//如要本地队列没有,再从全局队列拿
 	if sched.runqsize != 0 {
 		lock(&sched.lock)
 		gp := globrunqget(_p_, 0)
@@ -2537,6 +2546,7 @@ top:
 	// blocked thread (e.g. it has already returned from netpoll, but does
 	// not set lastpoll yet), this thread will do blocking netpoll below
 	// anyway.
+	//如果全局队没有的.同时也使用了netpoll,就会试着从netpoll中捞..此时是nob-blocking的
 	if netpollinited() && atomic.Load(&netpollWaiters) > 0 && atomic.Load64(&sched.lastpoll) != 0 {
 		if list := netpoll(0); !list.empty() { // non-blocking
 			gp := list.pop()
@@ -2549,6 +2559,7 @@ top:
 		}
 	}
 
+	//如果netpoll中还是没有.就会去偷.
 	// Steal work from other P's.
 	procs := uint32(gomaxprocs)
 	ranTimer := false
@@ -2562,14 +2573,16 @@ top:
 		_g_.m.spinning = true
 		atomic.Xadd(&sched.nmspinning, 1)
 	}
+	//试偷4次.从别P偷一半
 	const stealTries = 4
 	for i := 0; i < stealTries; i++ {
 		stealTimersOrRunNextG := i == stealTries-1
-
+		//随机一个
 		for enum := stealOrder.start(fastrand()); !enum.done(); enum.next() {
 			if sched.gcwaiting != 0 {
 				goto top
 			}
+			//从P中随机选一个
 			p2 := allp[enum.position()]
 			if _p_ == p2 {
 				continue
@@ -2712,6 +2725,7 @@ stop:
 	}
 
 	// check all runqueues once again
+	//check一下plist, 如果有不空的,就绑定m,然后进行调试
 	for id, _p_ := range allpSnapshot {
 		if !idlepMaskSnapshot.read(uint32(id)) && !runqempty(_p_) {
 			lock(&sched.lock)
@@ -2799,6 +2813,7 @@ stop:
 		}
 	}
 
+	//如果netpoll开启,就会等netpoll
 	// poll network
 	if netpollinited() && (atomic.Load(&netpollWaiters) > 0 || pollUntil != 0) && atomic.Xchg64(&sched.lastpoll, 0) != 0 {
 		atomic.Store64(&sched.pollUntil, uint64(pollUntil))
@@ -2849,6 +2864,7 @@ stop:
 			netpollBreak()
 		}
 	}
+	//什么都没有的话,只能blockm
 	stopm()
 	goto top
 }
@@ -2962,9 +2978,11 @@ func injectglist(glist *gList) {
 		return
 	}
 
+	//空闲的p的数
 	npidle := int(atomic.Load(&sched.npidle))
 	var globq gQueue
 	var n int
+	//把npidle的放到入全局队列.
 	for n = 0; n < npidle && !q.empty(); n++ {
 		g := q.pop()
 		globq.pushBack(g)
@@ -2977,6 +2995,7 @@ func injectglist(glist *gList) {
 		qsize -= n
 	}
 
+	//如果没有空闲的.就自己用.
 	if !q.empty() {
 		runqputbatch(pp, &q, qsize)
 	}
