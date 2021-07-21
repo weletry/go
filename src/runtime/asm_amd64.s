@@ -216,18 +216,21 @@ ok:
 	MOVQ	AX, 8(SP)
 	CALL	runtime·args(SB)
 	CALL	runtime·osinit(SB)
-	//init调试器,同时也创建了一批p
+	//init调试器,同时也init p
 	CALL	runtime·schedinit(SB)
 
 	// create a new goroutine to start program
+	//把go_proc_main方法压栈
 	MOVQ	$runtime·mainPC(SB), AX		// entry
 	PUSHQ	AX
 	PUSHQ	$0			// arg size
+	//创建一个入口方法提goroutine
 	CALL	runtime·newproc(SB)
 	POPQ	AX
 	POPQ	AX
 
 	// start this M
+	//启动M开启调度
 	CALL	runtime·mstart(SB)
 
 	CALL	runtime·abort(SB)	// mstart should never return
