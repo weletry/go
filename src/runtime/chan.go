@@ -197,20 +197,22 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		t0 = cputicks()
 	}
 
+	//加上锁
 	lock(&c.lock)
 
+	//判断是否已经close
 	if c.closed != 0 {
 		unlock(&c.lock)
 		panic(plainError("send on closed channel"))
 	}
 
+	//如果recvq队列有等候groutine, 就直接唤醒G
 	if sg := c.recvq.dequeue(); sg != nil {
-		// Found a waiting receiver. We pass the value we want to send
-		// directly to the receiver, bypassing the channel buffer (if any).
+		//直接把当前消息发给的g
 		send(c, sg, ep, func() { unlock(&c.lock) }, 3)
 		return true
 	}
-
+	//如果队列还有空间, 就把数据放入到队列中
 	if c.qcount < c.dataqsiz {
 		// Space is available in the channel buffer. Enqueue the element to send.
 		qp := chanbuf(c, c.sendx)
@@ -232,8 +234,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		return false
 	}
 
-	// Block on the channel. Some receiver will complete our operation for us.
+	//如果没有等待,recv_g列表为空
 	gp := getg()
+	//从p拿一个sudog结构
 	mysg := acquireSudog()
 	mysg.releasetime = 0
 	if t0 != 0 {
@@ -243,17 +246,20 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// on gp.waiting where copystack can find it.
 	mysg.elem = ep
 	mysg.waitlink = nil
+	//设置在等等gp是哪个.在recv的时候,会被重新加入到runq中
 	mysg.g = gp
 	mysg.isSelect = false
 	mysg.c = c
 	gp.waiting = mysg
 	gp.param = nil
+	//把这个结果加入到sendwaiter队列中
 	c.sendq.enqueue(mysg)
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
 	// changes and when we set gp.activeStackChans is not safe for
 	// stack shrinking.
 	atomic.Store8(&gp.parkingOnChan, 1)
+	//挂起当前g
 	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanSend, traceEvGoBlockSend, 2)
 	// Ensure the value being sent is kept alive until the
 	// receiver copies it out. The sudog has a pointer to the
@@ -273,6 +279,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		blockevent(mysg.releasetime-t0, 2)
 	}
 	mysg.c = nil
+	//归还当前mysg
 	releaseSudog(mysg)
 	if closed {
 		if c.closed == 0 {
@@ -373,7 +380,7 @@ func closechan(c *hchan) {
 
 	var glist gList
 
-	// release all readers
+	// 释放所有的reader
 	for {
 		sg := c.recvq.dequeue()
 		if sg == nil {
@@ -395,7 +402,7 @@ func closechan(c *hchan) {
 		glist.push(gp)
 	}
 
-	// release all writers (they will panic)
+	// 释放所有的writer
 	for {
 		sg := c.sendq.dequeue()
 		if sg == nil {
@@ -415,7 +422,7 @@ func closechan(c *hchan) {
 	}
 	unlock(&c.lock)
 
-	// Ready all Gs now that we've dropped the channel lock.
+	//把有的goroutine都唤醒
 	for !glist.empty() {
 		gp := glist.pop()
 		gp.schedlink = 0

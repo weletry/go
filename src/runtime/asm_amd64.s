@@ -305,15 +305,21 @@ TEXT runtime·gogo(SB), NOSPLIT, $16-8
 TEXT runtime·mcall(SB), NOSPLIT, $0-8
 	MOVQ	fn+0(FP), DI
 
+     //保存当前g状态.
 	get_tls(CX)
+	//AX = 当前运行g
 	MOVQ	g(CX), AX	// save state in g->sched
+	//BX = 前g的PC
 	MOVQ	0(SP), BX	// caller's PC
+	//gobuf_pc = BX = 前g的PC
 	MOVQ	BX, (g_sched+gobuf_pc)(AX)
+	//把sp, g, pb都保存到g_sched_gobug中
 	LEAQ	fn+0(FP), BX	// caller's SP
 	MOVQ	BX, (g_sched+gobuf_sp)(AX)
 	MOVQ	AX, (g_sched+gobuf_g)(AX)
 	MOVQ	BP, (g_sched+gobuf_bp)(AX)
 
+    //把栈切换到g0上
 	// switch to m->g0 & its stack, call fn
 	MOVQ	g(CX), BX
 	MOVQ	g_m(BX), BX
